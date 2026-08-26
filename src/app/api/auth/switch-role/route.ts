@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { signToken } from '@/lib/auth';
 
+export const dynamic = 'force-dynamic';
+
 const ROLE_DASHBOARDS: Record<string, string> = {
   SUPER_ADMIN: '/dashboard/super-admin',
   EVENT_HEAD: '/dashboard/event-head',

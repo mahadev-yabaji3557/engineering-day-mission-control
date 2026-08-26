@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest) {
   const session = getSession();
   if (!session || !['SUPER_ADMIN', 'EVENT_HEAD', 'ARENA_HEAD', 'JUDGE'].includes(session.role)) {
@@ -21,7 +23,7 @@ export async function GET(req: NextRequest) {
 
   // Get submissions
   const submissions = await prisma.submission.findMany({
-    where: { eventId: event.id },
+    where: { team: { eventCode } },
     include: {
       team: true,
       mission: {
@@ -37,7 +39,7 @@ export async function GET(req: NextRequest) {
 
   // Get existing scores
   const scores = await prisma.score.findMany({
-    where: { mission: { eventId: event.id } },
+    where: { team: { eventCode } },
     include: { scoreItems: true },
   });
 
@@ -53,7 +55,6 @@ export async function GET(req: NextRequest) {
         teamCode: sub.team.teamCode,
         teamName: sub.team.teamName,
         missionId: sub.missionId,
-        missionCode: sub.mission.missionCode,
         missionTitle: sub.mission.title,
         submittedAt: sub.submittedAt.toISOString(),
         status: sub.status,
@@ -65,11 +66,11 @@ export async function GET(req: NextRequest) {
               id: existingScore.id,
               totalScore: existingScore.totalScore,
               comments: existingScore.comments,
-              status: existingScore.status,
-              finalizedAt: existingScore.finalizedAt?.toISOString() || null,
+              isFinalized: existingScore.isFinalized,
+              scoredAt: existingScore.scoredAt.toISOString(),
               items: existingScore.scoreItems.map((item) => ({
                 rubricId: item.rubricId,
-                marksGiven: item.marksGiven,
+                marksGiven: item.marksAwarded,
               })),
             }
           : null,
@@ -106,7 +107,7 @@ export async function POST(req: NextRequest) {
       where: { teamId, missionId },
     });
 
-    if (existingScore && existingScore.status === 'FINALIZED' && session.role === 'JUDGE' && !unlockOverride) {
+    if (existingScore && existingScore.isFinalized && session.role === 'JUDGE' && !unlockOverride) {
       return NextResponse.json(
         { error: 'Score is finalized and locked. Only Event Head can unlock finalized scores.' },
         { status: 403 }
@@ -115,22 +116,27 @@ export async function POST(req: NextRequest) {
 
     // Validate marks against rubric maxMarks
     let calculatedTotal = 0;
-    const validatedItems: { rubricId: string; marksGiven: number }[] = [];
+    const validatedItems: { rubricId: string; marksAwarded: number }[] = [];
 
     for (const rubric of mission.rubrics) {
       const markInput = Number(rubricScores[rubric.id] ?? 0);
       if (markInput < 0 || markInput > rubric.maxMarks) {
         return NextResponse.json(
-          { error: `Marks for ${rubric.criteria} must be between 0 and ${rubric.maxMarks}` },
+          { error: `Marks for ${rubric.criterion} must be between 0 and ${rubric.maxMarks}` },
           { status: 400 }
         );
       }
       calculatedTotal += markInput;
-      validatedItems.push({ rubricId: rubric.id, marksGiven: markInput });
+      validatedItems.push({ rubricId: rubric.id, marksAwarded: markInput });
     }
 
-    const finalizedStatus = isFinalized ? 'FINALIZED' : 'DRAFT';
-    const now = new Date();
+    const submission = await prisma.submission.findFirst({
+      where: { teamId, missionId },
+    });
+
+    if (!submission) {
+      return NextResponse.json({ error: 'Submission not found for scoring' }, { status: 404 });
+    }
 
     let score;
     if (existingScore) {
@@ -141,20 +147,19 @@ export async function POST(req: NextRequest) {
           judgeId: session.id,
           totalScore: Number(calculatedTotal.toFixed(2)),
           comments: comments || '',
-          status: finalizedStatus,
-          finalizedAt: isFinalized ? now : existingScore.finalizedAt,
+          isFinalized: Boolean(isFinalized),
         },
       });
     } else {
       score = await prisma.score.create({
         data: {
+          submissionId: submission.id,
           judgeId: session.id,
           teamId,
           missionId,
           totalScore: Number(calculatedTotal.toFixed(2)),
           comments: comments || '',
-          status: finalizedStatus,
-          finalizedAt: isFinalized ? now : null,
+          isFinalized: Boolean(isFinalized),
         },
       });
     }
@@ -163,19 +168,18 @@ export async function POST(req: NextRequest) {
       data: validatedItems.map((item) => ({
         scoreId: score.id,
         rubricId: item.rubricId,
-        marksGiven: item.marksGiven,
+        marksAwarded: item.marksAwarded,
       })),
     });
 
     // Create Audit Log
     await prisma.auditLog.create({
       data: {
-        actorId: session.id,
+        actorEmail: session.email,
         actorRole: session.role,
         action: isFinalized ? 'SCORE_FINALIZED' : 'SCORE_DRAFT_SAVED',
-        target: `TEAM_${teamId}_MISSION_${missionId}`,
-        newValue: `Total: ${calculatedTotal}/${mission.totalPoints}. Status: ${finalizedStatus}`,
-        ipAddress: req.headers.get('x-forwarded-for') || 'local',
+        targetEntity: `TEAM_${teamId}_MISSION_${missionId}`,
+        details: `Total: ${calculatedTotal}/${mission.maxScore}. Finalized: ${Boolean(isFinalized)}`,
       },
     });
 
@@ -183,7 +187,7 @@ export async function POST(req: NextRequest) {
       success: true,
       scoreId: score.id,
       totalScore: calculatedTotal,
-      status: finalizedStatus,
+      isFinalized: Boolean(isFinalized),
     });
   } catch (error: any) {
     console.error('Judging POST error:', error);

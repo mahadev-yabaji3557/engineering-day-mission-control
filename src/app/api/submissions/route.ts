@@ -3,15 +3,15 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { evaluateTeamClearance, getEventClock } from '@/lib/clock';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const eventId = searchParams.get('eventId');
   const teamId = searchParams.get('teamId');
   const missionId = searchParams.get('missionId');
 
   const submissions = await prisma.submission.findMany({
     where: {
-      ...(eventId ? { eventId } : {}),
       ...(teamId ? { teamId } : {}),
       ...(missionId ? { missionId } : {}),
     },
@@ -45,9 +45,9 @@ export async function POST(req: NextRequest) {
 
     // Evaluate clock & clearance
     const clearance = await evaluateTeamClearance(qrToken);
-    const { effectiveTime, status: clockStatus, allowSubmissionsDuringPause } = await getEventClock(team.eventId);
+    const { effectiveTime, status: clockStatus } = await getEventClock(team.eventCode);
 
-    if (clockStatus === 'PAUSED' && !allowSubmissionsDuringPause && !isOverride) {
+    if (clockStatus === 'PAUSED' && !isOverride) {
       return NextResponse.json(
         { error: 'Submissions are temporarily blocked while the event is paused.' },
         { status: 403 }
@@ -75,17 +75,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check if late (if effectiveTime > round endTime)
+    const mission = await prisma.mission.findUnique({
+      where: { id: missionId },
+    });
+
+    const roundNumber = mission?.roundNumber || 1;
+
+    // Check if late
     const round = await prisma.missionRound.findFirst({
-      where: { eventId: team.eventId, missionId },
+      where: { eventCode: team.eventCode, roundNumber },
     });
 
     let isLate = false;
-    if (round && effectiveTime > new Date(round.endTime)) {
+    if (round && effectiveTime > new Date(round.scheduledEnd)) {
       isLate = true;
     }
 
-    const submissionStatus = isLate ? 'LATE' : 'LOCKED';
+    const submissionStatus = 'SUBMITTED';
 
     let submission;
     if (existingSubmission) {
@@ -106,8 +112,8 @@ export async function POST(req: NextRequest) {
       submission = await prisma.submission.create({
         data: {
           teamId: team.id,
-          eventId: team.eventId,
           missionId,
+          roundNumber,
           submittedAt: effectiveTime,
           status: submissionStatus,
           isLate,
@@ -129,12 +135,11 @@ export async function POST(req: NextRequest) {
     // Create Audit Log
     await prisma.auditLog.create({
       data: {
-        actorId: session?.id || team.id,
+        actorEmail: session?.email || team.teamCode,
         actorRole: session?.role || 'PARTICIPANT',
         action: 'SUBMISSION_SAVED',
-        target: `TEAM_${team.teamCode}_MISSION_${missionId}`,
-        newValue: `Submitted ${answerEntries.length} answer fields. Status: ${submissionStatus}. IsLate: ${isLate}`,
-        ipAddress: req.headers.get('x-forwarded-for') || 'local',
+        targetEntity: `TEAM_${team.teamCode}_MISSION_${missionId}`,
+        details: `Submitted ${answerEntries.length} answer fields. IsLate: ${isLate}`,
       },
     });
 

@@ -3,6 +3,8 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { getEventClock } from '@/lib/clock';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const eventCode = searchParams.get('eventCode') || 'EM';
@@ -10,9 +12,7 @@ export async function GET(req: NextRequest) {
   const event = await prisma.event.findUnique({
     where: { code: eventCode },
     include: {
-      clockState: true,
       rounds: {
-        include: { mission: true },
         orderBy: { roundNumber: 'asc' },
       },
     },
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Event not found' }, { status: 404 });
   }
 
-  const clockData = await getEventClock(event.id);
+  const clockData = await getEventClock(eventCode);
 
   return NextResponse.json({
     event: {
@@ -36,16 +36,13 @@ export async function GET(req: NextRequest) {
     simulatedOffsetSeconds: clockData.simulatedOffsetSeconds,
     status: clockData.status,
     emergencyNotice: clockData.emergencyNotice,
-    allowSubmissionsDuringPause: clockData.allowSubmissionsDuringPause,
     rounds: event.rounds.map((r) => ({
       id: r.id,
       roundNumber: r.roundNumber,
-      missionCode: r.mission.missionCode,
-      missionTitle: r.mission.title,
-      startTime: r.startTime.toISOString(),
-      endTime: r.endTime.toISOString(),
+      title: r.title,
+      startTime: r.scheduledStart.toISOString(),
+      endTime: r.scheduledEnd.toISOString(),
       durationMinutes: r.durationMinutes,
-      status: r.status,
     })),
   });
 }
@@ -58,74 +55,69 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { eventCode = 'EM', action, timeOffsetSeconds, emergencyNotice, allowSubmissions } = body;
+    const { eventCode = 'EM', action, timeOffsetSeconds, emergencyNotice } = body;
 
     const event = await prisma.event.findUnique({
       where: { code: eventCode },
-      include: { clockState: true },
     });
 
     if (!event) {
       return NextResponse.json({ error: 'Event not found' }, { status: 404 });
     }
 
-    let oldStatus = event.clockState?.status || 'NOT_STARTED';
+    const clockState = await prisma.eventClockState.findUnique({
+      where: { eventCode },
+    });
+
+    let oldStatus = clockState?.status || 'NOT_STARTED';
     let newStatus = oldStatus;
     let updateData: any = {};
 
     if (action === 'START' || action === 'RESUME') {
       newStatus = 'ACTIVE';
-      updateData = { status: 'ACTIVE', startTime: event.clockState?.startTime || new Date(), pausedAt: null };
+      updateData = { status: 'ACTIVE' };
     } else if (action === 'PAUSE') {
       newStatus = 'PAUSED';
-      updateData = { status: 'PAUSED', pausedAt: new Date() };
+      updateData = { status: 'PAUSED' };
     } else if (action === 'EMERGENCY_HOLD') {
       newStatus = 'EMERGENCY_HOLD';
       updateData = {
         status: 'EMERGENCY_HOLD',
-        pausedAt: new Date(),
-        emergencyNotice: emergencyNotice || 'EMERGENCY HOLD INITIATED BY EVENT HEAD',
       };
     } else if (action === 'WARP_TIME') {
       const offset = Number(timeOffsetSeconds) || 0;
       updateData = { simulatedTimeOffsetSeconds: offset };
-    } else if (action === 'SET_NOTICE') {
-      updateData = { emergencyNotice: emergencyNotice || null };
-    } else if (action === 'TOGGLE_PAUSE_SUBMISSIONS') {
-      updateData = { allowSubmissionsDuringPause: Boolean(allowSubmissions) };
     } else {
       return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
 
     // Update event clock state
     const updatedClock = await prisma.eventClockState.upsert({
-      where: { eventId: event.id },
+      where: { eventCode },
       create: {
-        eventId: event.id,
+        eventCode,
         status: newStatus,
         ...updateData,
       },
       update: updateData,
     });
 
-    // Also update main Event table status if status changed
+    // Update main Event status if changed
     if (newStatus !== oldStatus) {
       await prisma.event.update({
-        where: { id: event.id },
+        where: { code: eventCode },
         data: { status: newStatus },
       });
     }
 
-    // Create Audit Log
+    // Audit log
     await prisma.auditLog.create({
       data: {
-        actorId: session.id,
+        actorEmail: session.email,
         actorRole: session.role,
         action: `CLOCK_${action}`,
-        target: `EVENT_${eventCode}`,
-        oldValue: oldStatus,
-        newValue: newStatus,
-        ipAddress: req.headers.get('x-forwarded-for') || 'local',
+        targetEntity: `EVENT_${eventCode}`,
+        details: `Clock status changed from ${oldStatus} to ${newStatus}.`,
       },
     });
 

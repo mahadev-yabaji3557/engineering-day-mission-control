@@ -3,6 +3,8 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { calculateLeaderboard } from '@/lib/tiebreaker';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest, { params }: { params: { type: string } }) {
   const session = getSession();
   if (!session || !['SUPER_ADMIN', 'EVENT_HEAD', 'ARENA_HEAD', 'JUDGE'].includes(session.role)) {
@@ -26,54 +28,52 @@ export async function GET(req: NextRequest, { params }: { params: { type: string
 
   if (exportType === 'teams') {
     const teams = await prisma.team.findMany({
-      where: { eventId: event.id },
+      where: { eventCode },
       orderBy: { teamCode: 'asc' },
     });
 
-    const headers = ['Team Code', 'Team Name', 'Members', 'QR Token', 'Status', 'Created At'];
+    const headers = ['Team Code', 'Team Name', 'Leader', 'Members', 'QR Token', 'Created At'];
     const rows = teams.map((t) => [
       t.teamCode,
       `"${t.teamName.replace(/"/g, '""')}"`,
-      `"${JSON.parse(t.members || '[]').join('; ')}"`,
+      `"${t.leaderName.replace(/"/g, '""')}"`,
+      `"${JSON.parse(t.memberNames || '[]').join('; ')}"`,
       t.qrToken,
-      t.status,
       t.createdAt.toISOString(),
     ]);
 
     csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
   } else if (exportType === 'access-logs') {
     const logs = await prisma.accessLog.findMany({
-      where: { eventId: event.id },
-      include: { team: true, mission: true },
+      where: { team: { eventCode } },
+      include: { team: true },
       orderBy: { timestamp: 'desc' },
     });
 
-    const headers = ['Timestamp', 'Team Code', 'Team Name', 'Mission Code', 'QR Status', 'Clearance Status', 'Packet Opened', 'Packet Opened At'];
+    const headers = ['Timestamp', 'Team Code', 'Team Name', 'Scan Type', 'Status', 'Details'];
     const rows = logs.map((l) => [
       l.timestamp.toISOString(),
-      l.team.teamCode,
-      `"${l.team.teamName.replace(/"/g, '""')}"`,
-      l.mission?.missionCode || 'N/A',
-      l.qrStatus,
-      l.clearanceStatus,
-      l.packetOpened ? 'YES' : 'NO',
-      l.packetOpenedAt?.toISOString() || '',
+      l.team?.teamCode || 'N/A',
+      `"${(l.team?.teamName || '').replace(/"/g, '""')}"`,
+      l.scanType,
+      l.status,
+      `"${(l.details || '').replace(/"/g, '""')}"`,
     ]);
 
     csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
   } else if (exportType === 'submissions') {
     const subs = await prisma.submission.findMany({
-      where: { eventId: event.id },
+      where: { team: { eventCode } },
       include: { team: true, mission: true, answers: true },
       orderBy: { submittedAt: 'desc' },
     });
 
-    const headers = ['Submission ID', 'Team Code', 'Team Name', 'Mission Code', 'Submitted At', 'Status', 'Is Late', 'Answers JSON'];
+    const headers = ['Submission ID', 'Team Code', 'Team Name', 'Mission Title', 'Submitted At', 'Status', 'Is Late', 'Answers JSON'];
     const rows = subs.map((s) => [
       s.id,
       s.team.teamCode,
       `"${s.team.teamName.replace(/"/g, '""')}"`,
-      s.mission.missionCode,
+      `"${s.mission.title.replace(/"/g, '""')}"`,
       s.submittedAt.toISOString(),
       s.status,
       s.isLate ? 'YES' : 'NO',
@@ -83,26 +83,26 @@ export async function GET(req: NextRequest, { params }: { params: { type: string
     csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
   } else if (exportType === 'scores') {
     const scores = await prisma.score.findMany({
-      where: { mission: { eventId: event.id } },
-      include: { team: true, mission: true, scoreItems: { include: { rubric: true } } },
-      orderBy: { createdAt: 'desc' },
+      where: { team: { eventCode } },
+      include: { team: true, mission: true },
+      orderBy: { scoredAt: 'desc' },
     });
 
-    const headers = ['Score ID', 'Team Code', 'Team Name', 'Mission Code', 'Total Score', 'Status', 'Finalized At', 'Comments'];
+    const headers = ['Score ID', 'Team Code', 'Team Name', 'Mission Title', 'Total Score', 'Is Finalized', 'Scored At', 'Comments'];
     const rows = scores.map((s) => [
       s.id,
       s.team.teamCode,
       `"${s.team.teamName.replace(/"/g, '""')}"`,
-      s.mission.missionCode,
+      `"${s.mission.title.replace(/"/g, '""')}"`,
       s.totalScore,
-      s.status,
-      s.finalizedAt?.toISOString() || '',
+      s.isFinalized ? 'YES' : 'NO',
+      s.scoredAt.toISOString(),
       `"${(s.comments || '').replace(/"/g, '""')}"`,
     ]);
 
     csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
   } else if (exportType === 'final-results') {
-    const leaderboard = await calculateLeaderboard(event.id, true);
+    const leaderboard = await calculateLeaderboard(eventCode, true);
 
     const headers = ['Rank', 'Team Code', 'Team Name', 'Total Score', 'Completed Missions', 'Final Round Score', 'Reasoning Score', 'Tie-Breaker Applied', 'Tie-Breaker Reason'];
     const rows = leaderboard.map((l) => [
@@ -123,16 +123,14 @@ export async function GET(req: NextRequest, { params }: { params: { type: string
       orderBy: { timestamp: 'desc' },
     });
 
-    const headers = ['Timestamp', 'Actor ID', 'Actor Role', 'Action', 'Target', 'Old Value', 'New Value', 'IP Address'];
+    const headers = ['Timestamp', 'Actor Email', 'Actor Role', 'Action', 'Target Entity', 'Details'];
     const rows = logs.map((l) => [
       l.timestamp.toISOString(),
-      l.actorId,
+      l.actorEmail,
       l.actorRole,
       l.action,
-      l.target,
-      `"${(l.oldValue || '').replace(/"/g, '""')}"`,
-      `"${(l.newValue || '').replace(/"/g, '""')}"`,
-      l.ipAddress || '',
+      l.targetEntity,
+      `"${(l.details || '').replace(/"/g, '""')}"`,
     ]);
 
     csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');

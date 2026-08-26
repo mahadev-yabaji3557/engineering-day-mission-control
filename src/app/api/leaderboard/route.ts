@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { calculateLeaderboard } from '@/lib/tiebreaker';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const eventCode = searchParams.get('eventCode') || 'EM';
@@ -16,7 +18,7 @@ export async function GET(req: NextRequest) {
   }
 
   const isFinal = mode === 'final';
-  const leaderboard = await calculateLeaderboard(event.id, isFinal);
+  const leaderboard = await calculateLeaderboard(eventCode, isFinal);
 
   return NextResponse.json({
     event: { id: event.id, code: event.code, title: event.title, status: event.status },

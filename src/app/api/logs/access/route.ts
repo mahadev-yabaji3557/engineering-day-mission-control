@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest) {
   const session = getSession();
   if (!session || !['SUPER_ADMIN', 'EVENT_HEAD', 'ARENA_HEAD', 'ACCESS_OFFICER', 'MISSION_MARSHAL'].includes(session.role)) {
@@ -16,7 +18,6 @@ export async function GET(req: NextRequest) {
     orderBy: { timestamp: 'desc' },
     include: {
       team: true,
-      mission: true,
     },
   });
 
@@ -24,14 +25,11 @@ export async function GET(req: NextRequest) {
     logs: accessLogs.map((log) => ({
       id: log.id,
       timestamp: log.timestamp.toISOString(),
-      teamCode: log.team.teamCode,
-      teamName: log.team.teamName,
-      missionCode: log.mission?.missionCode || 'N/A',
-      qrStatus: log.qrStatus,
-      clearanceStatus: log.clearanceStatus,
-      packetOpened: log.packetOpened,
-      packetOpenedAt: log.packetOpenedAt?.toISOString() || null,
-      marshalId: log.marshalId,
+      teamCode: log.team?.teamCode || 'N/A',
+      teamName: log.team?.teamName || 'N/A',
+      scanType: log.scanType,
+      status: log.status,
+      details: log.details || '',
     })),
   });
 }

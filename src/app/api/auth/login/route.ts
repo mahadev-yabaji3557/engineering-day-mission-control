@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { comparePassword, signToken } from '@/lib/auth';
 
+export const dynamic = 'force-dynamic';
+
 const ROLE_DASHBOARDS: Record<string, string> = {
   SUPER_ADMIN: '/dashboard/super-admin',
   EVENT_HEAD: '/dashboard/event-head',
@@ -48,12 +50,11 @@ export async function POST(req: NextRequest) {
     // Record audit log
     await prisma.auditLog.create({
       data: {
-        actorId: user.id,
+        actorEmail: user.email,
         actorRole: user.role,
         action: 'USER_LOGIN',
-        target: 'AUTH',
-        newValue: `User ${user.email} logged in as ${user.role}.`,
-        ipAddress: req.headers.get('x-forwarded-for') || 'local',
+        targetEntity: 'AUTH',
+        details: `User ${user.email} logged in as ${user.role}.`,
       },
     });
 

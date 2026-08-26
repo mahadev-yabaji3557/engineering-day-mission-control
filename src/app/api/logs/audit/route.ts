@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest) {
   const session = getSession();
   if (!session || !['SUPER_ADMIN', 'EVENT_HEAD'].includes(session.role)) {
@@ -20,13 +22,11 @@ export async function GET(req: NextRequest) {
     logs: logs.map((l) => ({
       id: l.id,
       timestamp: l.timestamp.toISOString(),
-      actorId: l.actorId,
+      actorEmail: l.actorEmail,
       actorRole: l.actorRole,
       action: l.action,
-      target: l.target,
-      oldValue: l.oldValue,
-      newValue: l.newValue,
-      ipAddress: l.ipAddress,
+      targetEntity: l.targetEntity,
+      details: l.details,
     })),
   });
 }

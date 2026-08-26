@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -12,23 +14,25 @@ export async function POST(req: NextRequest) {
 
     const event = await prisma.event.findUnique({
       where: { code: eventCode },
-      include: { teams: true },
     });
 
     if (!event) {
       return NextResponse.json({ error: 'Invalid event selected.' }, { status: 404 });
     }
 
+    const existingTeams = await prisma.team.findMany({
+      where: { eventCode },
+    });
+
     // Auto-generate next teamCode (e.g. EM-26, UC-26)
-    const existingCount = event.teams.length;
-    const nextNum = existingCount + 1;
+    const nextNum = existingTeams.length + 1;
     const codeNum = nextNum < 10 ? `0${nextNum}` : `${nextNum}`;
     const teamCode = `${eventCode}-${codeNum}`;
 
     // Generate secure random QR token
     const qrToken = `tok_${eventCode.toLowerCase()}${codeNum}_` + Math.random().toString(36).substring(2, 10);
 
-    const membersArray = [leaderName];
+    const membersArray: string[] = [];
     if (Array.isArray(memberNames)) {
       memberNames.forEach((m) => {
         if (m && String(m).trim()) membersArray.push(String(m).trim());
@@ -37,24 +41,25 @@ export async function POST(req: NextRequest) {
 
     const newTeam = await prisma.team.create({
       data: {
-        eventId: event.id,
+        eventCode,
         teamCode,
         teamName: teamName.trim(),
-        members: JSON.stringify(membersArray),
+        leaderName: leaderName.trim(),
+        memberNames: JSON.stringify(membersArray),
+        contactEmail: contactEmail ? String(contactEmail).trim() : null,
+        contactPhone: contactPhone ? String(contactPhone).trim() : null,
         qrToken,
-        status: 'ACTIVE',
       },
     });
 
     // Create Audit Log
     await prisma.auditLog.create({
       data: {
-        actorId: 'public_registration',
+        actorEmail: contactEmail || 'public_registration',
         actorRole: 'PARTICIPANT',
         action: 'PUBLIC_TEAM_REGISTERED',
-        target: `TEAM_${newTeam.teamCode}`,
-        newValue: `Team ${newTeam.teamName} (${newTeam.teamCode}) self-registered. Leader: ${leaderName}. Contact: ${contactEmail || contactPhone || 'N/A'}`,
-        ipAddress: req.headers.get('x-forwarded-for') || 'local',
+        targetEntity: `TEAM_${newTeam.teamCode}`,
+        details: `Team ${newTeam.teamName} (${newTeam.teamCode}) self-registered. Leader: ${leaderName}. Contact: ${contactEmail || contactPhone || 'N/A'}`,
       },
     });
 
@@ -64,7 +69,7 @@ export async function POST(req: NextRequest) {
         id: newTeam.id,
         teamCode: newTeam.teamCode,
         teamName: newTeam.teamName,
-        members: membersArray,
+        members: [leaderName, ...membersArray],
         qrToken: newTeam.qrToken,
         eventTitle: event.title,
         scanUrl: `/scan/${newTeam.qrToken}`,

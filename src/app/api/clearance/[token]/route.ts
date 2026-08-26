@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { evaluateTeamClearance } from '@/lib/clock';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest, { params }: { params: { token: string } }) {
   try {
     const token = params.token;
@@ -12,23 +14,22 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
       await prisma.accessLog.create({
         data: {
           teamId: result.teamId,
-          eventId: (await prisma.team.findUnique({ where: { id: result.teamId } }))?.eventId || '',
-          missionId: result.missionId || null,
-          qrStatus: result.qrStatus,
-          clearanceStatus: result.clearanceStatus,
-          packetOpened: result.packetOpened || false,
+          qrToken: token,
+          scanType: 'MISSION_CLEARANCE',
+          status: result.clearanceStatus,
+          details: result.message,
         },
       });
     }
 
-    // If clearance is granted, include the structured mission fields for online submission
+    // Include structured mission fields if clearance is GRANTED
     let fields: any[] = [];
     let submissionData: any = null;
 
     if (result.clearanceStatus === 'GRANTED' && result.missionId) {
       fields = await prisma.missionField.findMany({
         where: { missionId: result.missionId },
-        orderBy: { order: 'asc' },
+        orderBy: { orderIndex: 'asc' },
       });
 
       if (result.teamId) {
@@ -62,8 +63,8 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
         fieldKey: f.fieldKey,
         label: f.label,
         fieldType: f.fieldType,
-        options: f.options ? JSON.parse(f.options) : null,
-        required: f.required,
+        options: f.optionsJson ? JSON.parse(f.optionsJson) : null,
+        required: f.isRequired,
       })),
       existingSubmission: submissionData,
     });

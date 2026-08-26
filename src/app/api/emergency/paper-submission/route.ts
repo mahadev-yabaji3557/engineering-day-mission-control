@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: NextRequest) {
   const session = getSession();
   if (!session || !['SUPER_ADMIN', 'EVENT_HEAD', 'ARENA_HEAD', 'VOLUNTEER', 'MISSION_MARSHAL'].includes(session.role)) {
@@ -24,11 +26,13 @@ export async function POST(req: NextRequest) {
     }
 
     const mission = await prisma.mission.findFirst({
-      where: { eventId: team.eventId, missionCode },
+      where: { eventCode: team.eventCode, title: { contains: missionCode } },
+    }) || await prisma.mission.findFirst({
+      where: { eventCode: team.eventCode },
     });
 
     if (!mission) {
-      return NextResponse.json({ error: `Mission ${missionCode} not found` }, { status: 404 });
+      return NextResponse.json({ error: `Mission for ${team.eventCode} not found` }, { status: 404 });
     }
 
     const receivedDate = new Date(physicalReceivedTime);
@@ -52,8 +56,8 @@ export async function POST(req: NextRequest) {
       submission = await prisma.submission.create({
         data: {
           teamId: team.id,
-          eventId: team.eventId,
           missionId: mission.id,
+          roundNumber: mission.roundNumber,
           submittedAt: receivedDate,
           status: 'SUBMITTED',
           isLate: false,
@@ -73,19 +77,18 @@ export async function POST(req: NextRequest) {
     // Record audit log
     await prisma.auditLog.create({
       data: {
-        actorId: session.id,
+        actorEmail: session.email,
         actorRole: session.role,
         action: 'EMERGENCY_PAPER_SUBMISSION',
-        target: `TEAM_${teamCode}_MISSION_${missionCode}`,
-        newValue: `Physical paper answer sheet collected at ${receivedDate.toISOString()}. Staff: ${session.name}`,
-        ipAddress: req.headers.get('x-forwarded-for') || 'local',
+        targetEntity: `TEAM_${teamCode}_MISSION_${missionCode}`,
+        details: `Physical paper answer sheet collected at ${receivedDate.toISOString()}. Staff: ${session.name}`,
       },
     });
 
     return NextResponse.json({
       success: true,
       submissionId: submission.id,
-      message: `Emergency paper submission recorded for ${teamCode} on mission ${missionCode}.`,
+      message: `Emergency paper submission recorded for ${teamCode}.`,
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
