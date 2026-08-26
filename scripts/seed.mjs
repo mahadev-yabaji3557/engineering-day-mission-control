@@ -6,48 +6,36 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Starting Engineering Day — Mission Control database seed...');
 
-  // Clean existing tables
-  await prisma.auditLog.deleteMany();
-  await prisma.accessLog.deleteMany();
-  await prisma.scoreItem.deleteMany();
-  await prisma.score.deleteMany();
-  await prisma.submissionAnswer.deleteMany();
-  await prisma.submission.deleteMany();
-  await prisma.missionField.deleteMany();
-  await prisma.rubric.deleteMany();
-  await prisma.missionRound.deleteMany();
-  await prisma.mission.deleteMany();
-  await prisma.team.deleteMany();
-  await prisma.eventClockState.deleteMany();
-  await prisma.event.deleteMany();
-  await prisma.user.deleteMany();
-  await prisma.tieBreakConfig.deleteMany();
-
-  const hashedDefaultPassword = await bcrypt.hash('admin123', 10);
-  const hashedStaffPassword = await bcrypt.hash('password123', 10);
-
-  // 1. Create Users
+  // 1. Create Default Users for all 8 roles
   console.log('👤 Seeding default role-based users...');
-  const usersData = [
-    { name: 'Super Admin', email: 'admin@missioncontrol.org', passwordHash: hashedDefaultPassword, role: 'SUPER_ADMIN' },
-    { name: 'Dr. Sarah Connor (Event Head)', email: 'eventhead@missioncontrol.org', passwordHash: hashedStaffPassword, role: 'EVENT_HEAD' },
-    { name: 'Prof. Alan Turing (Arena Head A)', email: 'arenahead@missioncontrol.org', passwordHash: hashedStaffPassword, role: 'ARENA_HEAD' },
-    { name: 'Officer Marcus Vance (Access Officer)', email: 'access@missioncontrol.org', passwordHash: hashedStaffPassword, role: 'ACCESS_OFFICER' },
-    { name: 'Marshal Elena Rostova (Mission Marshal)', email: 'marshal@missioncontrol.org', passwordHash: hashedStaffPassword, role: 'MISSION_MARSHAL' },
-    { name: 'Dr. Viktor Vance (Chief Judge)', email: 'judge1@missioncontrol.org', passwordHash: hashedStaffPassword, role: 'JUDGE' },
-    { name: 'Prof. Evelyn Reed (Evaluator Judge)', email: 'judge2@missioncontrol.org', passwordHash: hashedStaffPassword, role: 'JUDGE' },
-    { name: 'Alex Rivera (Volunteer Officer)', email: 'volunteer@missioncontrol.org', passwordHash: hashedStaffPassword, role: 'VOLUNTEER' },
-    { name: 'Team EM-01 Lead (Participant)', email: 'participant@missioncontrol.org', passwordHash: hashedStaffPassword, role: 'PARTICIPANT' },
+  const passwordHash = await bcrypt.hash('password123', 10);
+  const adminPasswordHash = await bcrypt.hash('admin123', 10);
+
+  const users = [
+    { name: 'Super Admin', email: 'admin@missioncontrol.org', passwordHash: adminPasswordHash, role: 'SUPER_ADMIN' },
+    { name: 'Event Head (EM)', email: 'eventhead@missioncontrol.org', passwordHash, role: 'EVENT_HEAD' },
+    { name: 'Arena Head (Arena 1)', email: 'arena1@missioncontrol.org', passwordHash, role: 'ARENA_HEAD', arenaId: 'ARENA-1' },
+    { name: 'Access Officer', email: 'access@missioncontrol.org', passwordHash, role: 'ACCESS_OFFICER' },
+    { name: 'Mission Marshal', email: 'marshal@missioncontrol.org', passwordHash, role: 'MISSION_MARSHAL' },
+    { name: 'Chief Judge', email: 'judge1@missioncontrol.org', passwordHash, role: 'JUDGE' },
+    { name: 'Volunteer Lead', email: 'volunteer@missioncontrol.org', passwordHash, role: 'VOLUNTEER' },
+    { name: 'Participant EM-01', email: 'participant@missioncontrol.org', passwordHash, role: 'PARTICIPANT' },
   ];
 
-  for (const u of usersData) {
-    await prisma.user.create({ data: u });
+  for (const user of users) {
+    await prisma.user.upsert({
+      where: { email: user.email },
+      update: { passwordHash: user.passwordHash, role: user.role },
+      create: user,
+    });
   }
 
   // 2. Create Events
   console.log('🏆 Seeding events...');
-  const emEvent = await prisma.event.create({
-    data: {
+  const emEvent = await prisma.event.upsert({
+    where: { code: 'EM' },
+    update: {},
+    create: {
       code: 'EM',
       title: "ENGINEER'S MIND",
       description: "Premier analytical engineering competition testing algorithmic logic, structural resilience, and system diagnostics.",
@@ -55,8 +43,10 @@ async function main() {
     },
   });
 
-  const ucEvent = await prisma.event.create({
-    data: {
+  const ucEvent = await prisma.event.upsert({
+    where: { code: 'UC' },
+    update: {},
+    create: {
       code: 'UC',
       title: 'ENGINEERING UNDERCOVER',
       description: 'High-stakes covert tactical engineering challenge involving reverse engineering, signal decryption, and threat matrix mitigation.',
@@ -65,36 +55,46 @@ async function main() {
   });
 
   // 3. Create Event Clock States
-  await prisma.eventClockState.create({
-    data: {
-      eventId: emEvent.id,
+  await prisma.eventClockState.upsert({
+    where: { eventCode: 'EM' },
+    update: {},
+    create: {
+      eventCode: 'EM',
       status: 'NOT_STARTED',
-      totalPausedSeconds: 0,
       simulatedTimeOffsetSeconds: 0,
     },
   });
 
-  await prisma.eventClockState.create({
-    data: {
-      eventId: ucEvent.id,
+  await prisma.eventClockState.upsert({
+    where: { eventCode: 'UC' },
+    update: {},
+    create: {
+      eventCode: 'UC',
       status: 'NOT_STARTED',
-      totalPausedSeconds: 0,
       simulatedTimeOffsetSeconds: 0,
     },
   });
 
   // Tie-Break Config
-  await prisma.tieBreakConfig.create({
-    data: {
-      eventId: emEvent.id,
-      priorityRule: 'FINAL_ROUND_FIRST,REASONING_SCORE_SECOND,EARLIEST_SUBMISSION_THIRD,EVENT_HEAD_DECISION',
+  await prisma.tieBreakConfig.upsert({
+    where: { eventCode: 'EM' },
+    update: {},
+    create: {
+      eventCode: 'EM',
+      tier1Criterion: 'TOTAL_SCORE',
+      tier2Criterion: 'COMPLEXITY_MISSION_SCORE',
+      tier3Criterion: 'EARLIEST_SUBMISSION',
     },
   });
 
-  await prisma.tieBreakConfig.create({
-    data: {
-      eventId: ucEvent.id,
-      priorityRule: 'FINAL_ROUND_FIRST,REASONING_SCORE_SECOND,EARLIEST_SUBMISSION_THIRD,EVENT_HEAD_DECISION',
+  await prisma.tieBreakConfig.upsert({
+    where: { eventCode: 'UC' },
+    update: {},
+    create: {
+      eventCode: 'UC',
+      tier1Criterion: 'TOTAL_SCORE',
+      tier2Criterion: 'COMPLEXITY_MISSION_SCORE',
+      tier3Criterion: 'EARLIEST_SUBMISSION',
     },
   });
 
@@ -112,16 +112,18 @@ async function main() {
   for (let i = 1; i <= 25; i++) {
     const codeNum = i < 10 ? `0${i}` : `${i}`;
     const teamCode = `EM-${codeNum}`;
-    const token = `tok_em${codeNum}_` + Math.random().toString(36).substring(2, 10);
+    const token = `tok_em${codeNum}_xvas9ha5`;
     
-    await prisma.team.create({
-      data: {
-        eventId: emEvent.id,
+    await prisma.team.upsert({
+      where: { teamCode },
+      update: {},
+      create: {
+        eventCode: 'EM',
         teamCode,
         teamName: sampleTeamNamesEM[i - 1] || `Team ${teamCode}`,
-        members: JSON.stringify([`Leader ${teamCode}`, `Engineer B`, `Engineer C`]),
+        leaderName: `Leader ${teamCode}`,
+        memberNames: JSON.stringify([`Engineer B`, `Engineer C`]),
         qrToken: token,
-        status: 'ACTIVE',
       },
     });
   }
@@ -137,16 +139,18 @@ async function main() {
   for (let i = 1; i <= 25; i++) {
     const codeNum = i < 10 ? `0${i}` : `${i}`;
     const teamCode = `UC-${codeNum}`;
-    const token = `tok_uc${codeNum}_` + Math.random().toString(36).substring(2, 10);
+    const token = `tok_uc${codeNum}_2tppntzz`;
     
-    await prisma.team.create({
-      data: {
-        eventId: ucEvent.id,
+    await prisma.team.upsert({
+      where: { teamCode },
+      update: {},
+      create: {
+        eventCode: 'UC',
         teamCode,
         teamName: sampleTeamNamesUC[i - 1] || `Team ${teamCode}`,
-        members: JSON.stringify([`Agent ${teamCode}`, `Tactical B`, `Tactical C`]),
+        leaderName: `Agent ${teamCode}`,
+        memberNames: JSON.stringify([`Tactical B`, `Tactical C`]),
         qrToken: token,
-        status: 'ACTIVE',
       },
     });
   }
@@ -162,7 +166,6 @@ async function main() {
     { code: 'EM-F', title: 'Grand Mission: Autonomous Smart Grid Design', pts: 25 },
   ];
 
-  // Base reference date for timing (Today 10:15 AM)
   const baseDate = new Date();
   baseDate.setHours(10, 15, 0, 0);
 
@@ -172,12 +175,11 @@ async function main() {
     const mData = emMissionsData[idx];
     const mission = await prisma.mission.create({
       data: {
-        eventId: emEvent.id,
-        missionCode: mData.code,
+        eventCode: 'EM',
+        roundNumber: idx + 1,
         title: mData.title,
         description: `Official problem set for ${mData.code}. Refer to your physical sealed packet.`,
-        instructions: 'Open your physical sealed packet after clearance is granted. Submit final answers below before time expires.',
-        totalPoints: mData.pts,
+        maxScore: mData.pts,
       },
     });
 
@@ -189,50 +191,34 @@ async function main() {
           fieldKey: 'problem_statement',
           label: 'Primary Engineering Failure / Bottleneck Identification',
           fieldType: 'SHORT_TEXT',
-          required: true,
-          order: 1,
+          isRequired: true,
+          orderIndex: 1,
         },
         {
           missionId: mission.id,
           fieldKey: 'technical_strategy',
           label: 'Detailed Technical Methodology & Step-by-Step Resolution',
           fieldType: 'LONG_TEXT',
-          required: true,
-          order: 2,
+          isRequired: true,
+          orderIndex: 2,
         },
         {
           missionId: mission.id,
           fieldKey: 'subsystem_selection',
           label: 'Recommended Mitigation Architecture Strategy',
-          fieldType: 'MCQ',
-          options: JSON.stringify(['Redundant Parallel Topology', 'Cascading Feedback Suppression', 'Fail-Safe Isolation Barrier', 'Dynamic Frequency Scaling']),
-          required: true,
-          order: 3,
-        },
-        {
-          missionId: mission.id,
-          fieldKey: 'evidence_calculation',
-          label: 'Diagnostic Calculations / Equation Evidence Summary',
-          fieldType: 'EVIDENCE',
-          required: true,
-          order: 4,
-        },
-        {
-          missionId: mission.id,
-          fieldKey: 'risk_justification',
-          label: 'Safety, Margin of Error & Failure Mode Justification',
-          fieldType: 'JUSTIFICATION',
-          required: true,
-          order: 5,
+          fieldType: 'MULTIPLE_CHOICE',
+          optionsJson: JSON.stringify(['Redundant Parallel Topology', 'Cascading Feedback Suppression', 'Fail-Safe Isolation Barrier', 'Dynamic Frequency Scaling']),
+          isRequired: true,
+          orderIndex: 3,
         },
         {
           missionId: mission.id,
           fieldKey: 'confidence_rating',
           label: 'Team Solution Confidence Level (1 = Low, 5 = Maximum)',
-          fieldType: 'CONFIDENCE',
-          options: JSON.stringify(['1', '2', '3', '4', '5']),
-          required: true,
-          order: 6,
+          fieldType: 'NUMBER',
+          optionsJson: JSON.stringify(['1', '2', '3', '4', '5']),
+          isRequired: true,
+          orderIndex: 4,
         },
       ],
     });
@@ -240,11 +226,11 @@ async function main() {
     // Rubrics (Total 20 marks: 4 + 5 + 4 + 4 + 3)
     await prisma.rubric.createMany({
       data: [
-        { missionId: mission.id, criteria: 'Problem Identification', maxMarks: 4, weight: 1.0 },
-        { missionId: mission.id, criteria: 'Technical Reasoning & Logic', maxMarks: 5, weight: 1.0 },
-        { missionId: mission.id, criteria: 'Calculations & Evidence', maxMarks: 4, weight: 1.0 },
-        { missionId: mission.id, criteria: 'Decision Strategy & Safety Margin', maxMarks: 4, weight: 1.0 },
-        { missionId: mission.id, criteria: 'Clarity & Engineering Rigor', maxMarks: 3, weight: 1.0 },
+        { missionId: mission.id, criterion: 'Problem Identification', maxMarks: 4, description: 'Correct identification of failure vector' },
+        { missionId: mission.id, criterion: 'Technical Reasoning & Logic', maxMarks: 5, description: 'Rigor of engineering justification' },
+        { missionId: mission.id, criterion: 'Calculations & Evidence', maxMarks: 4, description: 'Mathematical hash & load proof' },
+        { missionId: mission.id, criterion: 'Decision Strategy & Safety Margin', maxMarks: 4, description: 'Selection of optimal mitigation' },
+        { missionId: mission.id, criterion: 'Clarity & Engineering Rigor', maxMarks: 3, description: 'Overall presentation quality' },
       ],
     });
 
@@ -255,13 +241,12 @@ async function main() {
 
     await prisma.missionRound.create({
       data: {
-        eventId: emEvent.id,
-        missionId: mission.id,
+        eventCode: 'EM',
         roundNumber: idx + 1,
-        startTime,
-        endTime,
+        title: mData.title,
+        scheduledStart: startTime,
+        scheduledEnd: endTime,
         durationMinutes: duration,
-        status: 'SCHEDULED',
       },
     });
 
@@ -285,12 +270,11 @@ async function main() {
     const mData = ucMissionsData[idx];
     const mission = await prisma.mission.create({
       data: {
-        eventId: ucEvent.id,
-        missionCode: mData.code,
+        eventCode: 'UC',
+        roundNumber: idx + 1,
         title: mData.title,
         description: `Covert operative task brief for ${mData.code}. Consult physical encrypted file.`,
-        instructions: 'Open your physical sealed packet once clearance is confirmed. Submit mission debrief answers below.',
-        totalPoints: mData.pts,
+        maxScore: mData.pts,
       },
     });
 
@@ -302,50 +286,34 @@ async function main() {
           fieldKey: 'threat_vector',
           label: 'Primary Threat Vector / Anomalous Signature Discovered',
           fieldType: 'SHORT_TEXT',
-          required: true,
-          order: 1,
+          isRequired: true,
+          orderIndex: 1,
         },
         {
           missionId: mission.id,
           fieldKey: 'countermeasure_plan',
           label: 'Operational Countermeasure Strategy & Protocol Execution',
           fieldType: 'LONG_TEXT',
-          required: true,
-          order: 2,
+          isRequired: true,
+          orderIndex: 2,
         },
         {
           missionId: mission.id,
           fieldKey: 'containment_mode',
           label: 'Selected Breach Containment Protocol',
-          fieldType: 'MCQ',
-          options: JSON.stringify(['Air-Gapped Isolation', 'Cryptographic Jamming Vector', 'Electromagnetic Shielding', 'Sub-Node Reset Sequence']),
-          required: true,
-          order: 3,
-        },
-        {
-          missionId: mission.id,
-          fieldKey: 'forensic_evidence',
-          label: 'Decrypted Key / Mathematical Hash Evidence',
-          fieldType: 'EVIDENCE',
-          required: true,
-          order: 4,
-        },
-        {
-          missionId: mission.id,
-          fieldKey: 'tactical_justification',
-          label: 'Operational Risk & Collateral Mitigation Rationale',
-          fieldType: 'JUSTIFICATION',
-          required: true,
-          order: 5,
+          fieldType: 'MULTIPLE_CHOICE',
+          optionsJson: JSON.stringify(['Air-Gapped Isolation', 'Cryptographic Jamming Vector', 'Electromagnetic Shielding', 'Sub-Node Reset Sequence']),
+          isRequired: true,
+          orderIndex: 3,
         },
         {
           missionId: mission.id,
           fieldKey: 'confidence_rating',
           label: 'Operative Confidence Rating (1-5)',
-          fieldType: 'CONFIDENCE',
-          options: JSON.stringify(['1', '2', '3', '4', '5']),
-          required: true,
-          order: 6,
+          fieldType: 'NUMBER',
+          optionsJson: JSON.stringify(['1', '2', '3', '4', '5']),
+          isRequired: true,
+          orderIndex: 4,
         },
       ],
     });
@@ -353,11 +321,11 @@ async function main() {
     // Rubrics
     await prisma.rubric.createMany({
       data: [
-        { missionId: mission.id, criteria: 'Threat Identification', maxMarks: 4, weight: 1.0 },
-        { missionId: mission.id, criteria: 'Technical Reasoning & Logic', maxMarks: 5, weight: 1.0 },
-        { missionId: mission.id, criteria: 'Forensic Evidence & Hash Accuracy', maxMarks: 4, weight: 1.0 },
-        { missionId: mission.id, criteria: 'Containment Strategy', maxMarks: 4, weight: 1.0 },
-        { missionId: mission.id, criteria: 'Debrief Precision & Rigor', maxMarks: 3, weight: 1.0 },
+        { missionId: mission.id, criterion: 'Threat Identification', maxMarks: 4, description: 'Discovery of breach entrypoint' },
+        { missionId: mission.id, criterion: 'Technical Reasoning & Logic', maxMarks: 5, description: 'Rigor of countermeasure plan' },
+        { missionId: mission.id, criterion: 'Forensic Evidence & Hash Accuracy', maxMarks: 4, description: 'Decryption proof' },
+        { missionId: mission.id, criterion: 'Containment Strategy', maxMarks: 4, description: 'Efficacy of breach isolation' },
+        { missionId: mission.id, criterion: 'Debrief Precision & Rigor', maxMarks: 3, description: 'Precision of debrief documentation' },
       ],
     });
 
@@ -368,13 +336,12 @@ async function main() {
 
     await prisma.missionRound.create({
       data: {
-        eventId: ucEvent.id,
-        missionId: mission.id,
+        eventCode: 'UC',
         roundNumber: idx + 1,
-        startTime,
-        endTime,
+        title: mData.title,
+        scheduledStart: startTime,
+        scheduledEnd: endTime,
         durationMinutes: duration,
-        status: 'SCHEDULED',
       },
     });
 
@@ -384,11 +351,11 @@ async function main() {
   // 7. Seed initial audit log
   await prisma.auditLog.create({
     data: {
-      actorId: 'system',
+      actorEmail: 'system@missioncontrol.org',
       actorRole: 'SUPER_ADMIN',
       action: 'SYSTEM_INITIALIZED',
-      target: 'DATABASE',
-      newValue: 'Seeded 50 teams (EM-01..25, UC-01..25), 10 missions, 10 rounds, rubrics, and structured fields.',
+      targetEntity: 'DATABASE',
+      details: 'Seeded 50 teams (EM-01..25, UC-01..25), 10 missions, 10 rounds, rubrics, and structured fields.',
     },
   });
 

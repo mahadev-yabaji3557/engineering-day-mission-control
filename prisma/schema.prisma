@@ -1,6 +1,6 @@
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
@@ -23,198 +23,168 @@ model Event {
   title       String   // ENGINEER'S MIND, ENGINEERING UNDERCOVER
   description String
   status      String   @default("NOT_STARTED") // NOT_STARTED, READY, ACTIVE, PAUSED, COMPLETED, EMERGENCY_HOLD
-  createdAt   DateTime @default(now())
-
-  teams       Team[]
-  missions    Mission[]
   rounds      MissionRound[]
-  clockState  EventClockState?
+  teams       Team[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model EventClockState {
-  id                          String    @id @default(uuid())
-  eventId                     String    @unique
-  status                      String    @default("NOT_STARTED") // NOT_STARTED, ACTIVE, PAUSED, EMERGENCY_HOLD, COMPLETED
-  startTime                   DateTime?
-  pausedAt                    DateTime?
-  totalPausedSeconds          Int       @default(0)
-  simulatedTimeOffsetSeconds Int       @default(0) // Used by Test Mode time warp
-  emergencyNotice             String?
-  allowSubmissionsDuringPause Boolean   @default(false)
-  updatedAt                   DateTime  @updatedAt
-
-  event                       Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
-}
-
-model Arena {
-  id        String   @id @default(uuid())
-  eventId   String
-  name      String
-  code      String
-  location  String
+  id                        String    @id @default(uuid())
+  eventCode                 String    @unique
+  status                    String    @default("NOT_STARTED") // NOT_STARTED, ACTIVE, PAUSED, EMERGENCY_HOLD
+  simulatedTimeOffsetSeconds Int       @default(0) // Time warp offset in seconds
+  activeRoundNumber         Int       @default(1)
+  roundStartedAt            DateTime?
+  roundEndsAt               DateTime?
+  updatedAt                 DateTime  @updatedAt
 }
 
 model Team {
-  id        String   @id @default(uuid())
-  eventId   String
-  teamCode  String   // e.g. EM-01, UC-07
-  teamName  String
-  members   String   // JSON string array of member names
-  qrToken   String   @unique // High entropy random token, e.g. tok_em01_9f8a7b6c
-  status    String   @default("ACTIVE") // ACTIVE, REVOKED
-  createdAt DateTime @default(now())
+  id            String   @id @default(uuid())
+  eventCode     String   // EM, UC
+  teamCode      String   @unique // EM-01, UC-12
+  teamName      String
+  qrToken       String   @unique // tok_em01_xvas9ha5
+  isRevoked     Boolean  @default(false)
+  leaderName    String
+  memberNames   String   // JSON string of names
+  contactEmail  String?
+  contactPhone  String?
+  createdAt     DateTime @default(now())
 
-  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  submissions Submission[]
-  accessLogs  AccessLog[]
-  scores      Score[]
+  event         Event    @relation(fields: [eventCode], references: [code])
+  submissions   Submission[]
+  scores        Score[]
+  accessLogs    AccessLog[]
 }
 
 model Mission {
-  id          String   @id @default(uuid())
-  eventId     String
-  missionCode String   // e.g. EM-01, EM-02, EM-F
-  title       String
-  description String
-  instructions String
-  totalPoints Int      @default(20)
-  arenaId     String?
+  id            String   @id @default(uuid())
+  eventCode     String   // EM, UC
+  roundNumber   Int
+  title         String
+  description   String
+  maxScore      Int      @default(100)
+  createdAt     DateTime @default(now())
 
-  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  fields      MissionField[]
-  rubrics     Rubric[]
-  rounds      MissionRound[]
-  submissions Submission[]
-  scores      Score[]
-  accessLogs  AccessLog[]
+  fields        MissionField[]
+  rubrics       Rubric[]
+  submissions   Submission[]
+  scores        Score[]
 }
 
 model MissionRound {
   id              String   @id @default(uuid())
-  eventId         String
-  missionId       String
+  eventCode       String
   roundNumber     Int
-  startTime       DateTime
-  endTime         DateTime
+  title           String
+  scheduledStart  DateTime
+  scheduledEnd    DateTime
   durationMinutes Int
-  status          String   @default("SCHEDULED") // SCHEDULED, ACTIVE, COMPLETED, PAUSED
 
-  event           Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  mission         Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  event           Event    @relation(fields: [eventCode], references: [code])
 }
 
 model MissionField {
-  id          String   @id @default(uuid())
-  missionId   String
-  fieldKey    String
-  label       String
-  fieldType   String   // SHORT_TEXT, LONG_TEXT, MCQ, RANKING, EVIDENCE, JUSTIFICATION, CONFIDENCE
-  options     String?  // JSON string for options if MCQ or ranking
-  required    Boolean  @default(true)
-  order       Int      @default(0)
+  id            String   @id @default(uuid())
+  missionId     String
+  fieldKey      String
+  fieldType     String   // SHORT_TEXT, LONG_TEXT, MULTIPLE_CHOICE, NUMBER
+  label         String
+  optionsJson   String?  // JSON string for choices
+  isRequired    Boolean  @default(true)
+  orderIndex    Int      @default(0)
 
-  mission     Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  mission       Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
 }
 
 model Submission {
-  id          String   @id @default(uuid())
-  teamId      String
-  eventId     String
-  missionId   String
-  submittedAt DateTime @default(now())
-  status      String   @default("SUBMITTED") // DRAFT, SUBMITTED, LATE, LOCKED
-  isLate      Boolean  @default(false)
-
-  team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  mission     Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
-  answers     SubmissionAnswer[]
+  id            String   @id @default(uuid())
+  teamId        String
+  missionId     String
+  roundNumber   Int
+  submittedAt   DateTime @default(now())
+  isLate        Boolean  @default(false)
+  status        String   @default("SUBMITTED") // SUBMITTED, UNDER_REVIEW, SCORED
+  
+  team          Team     @relation(fields: [teamId], references: [id])
+  mission       Mission  @relation(fields: [missionId], references: [id])
+  answers       SubmissionAnswer[]
+  scores        Score[]
 }
 
 model SubmissionAnswer {
-  id           String   @id @default(uuid())
-  submissionId String
-  fieldKey     String
-  answerValue  String
+  id            String   @id @default(uuid())
+  submissionId  String
+  fieldKey      String
+  answerValue   String
 
-  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  submission    Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
 }
 
 model Rubric {
-  id        String  @id @default(uuid())
-  missionId String
-  criteria  String
-  maxMarks  Float
-  weight    Float   @default(1.0)
+  id            String   @id @default(uuid())
+  missionId     String
+  criterion     String
+  maxMarks      Int
+  description   String
 
-  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
-  scoreItems ScoreItem[]
-}
-
-model JudgeAssignment {
-  id        String @id @default(uuid())
-  judgeId   String
-  eventId   String
-  missionId String
-  teamId    String
+  mission       Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
 }
 
 model Score {
-  id          String    @id @default(uuid())
-  judgeId     String
-  teamId      String
-  missionId   String
-  totalScore  Float     @default(0.0)
-  comments    String?
-  status      String    @default("DRAFT") // DRAFT, FINALIZED
-  finalizedAt DateTime?
-  createdAt   DateTime  @default(now())
+  id            String   @id @default(uuid())
+  submissionId  String
+  teamId        String
+  missionId     String
+  judgeId       String
+  totalScore    Float
+  isFinalized   Boolean  @default(false)
+  comments      String?
+  scoredAt      DateTime @default(now())
 
-  team        Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  mission     Mission   @relation(fields: [missionId], references: [id], onDelete: Cascade)
-  scoreItems  ScoreItem[]
+  submission    Submission @relation(fields: [submissionId], references: [id])
+  team          Team       @relation(fields: [teamId], references: [id])
+  mission       Mission    @relation(fields: [missionId], references: [id])
+  scoreItems    ScoreItem[]
 }
 
 model ScoreItem {
-  id         String @id @default(uuid())
-  scoreId    String
-  rubricId   String
-  marksGiven Float
+  id            String   @id @default(uuid())
+  scoreId       String
+  rubricId      String
+  marksAwarded  Float
 
-  score      Score  @relation(fields: [scoreId], references: [id], onDelete: Cascade)
-  rubric     Rubric @relation(fields: [rubricId], references: [id], onDelete: Cascade)
+  score         Score    @relation(fields: [scoreId], references: [id], onDelete: Cascade)
 }
 
 model AccessLog {
-  id              String    @id @default(uuid())
-  teamId          String
-  eventId         String
-  missionId       String?
-  qrStatus        String    // VALID, REVOKED, INVALID
-  clearanceStatus String    // GRANTED, LOCKED, DENIED
-  officerId       String?
-  packetOpened    Boolean   @default(false)
-  packetOpenedAt  DateTime?
-  marshalId       String?
-  timestamp       DateTime  @default(now())
+  id            String   @id @default(uuid())
+  teamId        String?
+  qrToken       String
+  scanType      String   // ENTRANCE_VERIFICATION, MISSION_CLEARANCE, PACKET_UNSEAL
+  status        String   // GRANTED, LOCKED, REVOKED, INVALID
+  timestamp     DateTime @default(now())
+  details       String?
 
-  team            Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  mission         Mission?  @relation(fields: [missionId], references: [id], onDelete: SetNull)
+  team          Team?    @relation(fields: [teamId], references: [id])
 }
 
 model AuditLog {
-  id        String   @id @default(uuid())
-  actorId   String
-  actorRole String
-  action    String
-  target    String
-  oldValue  String?
-  newValue  String?
-  ipAddress String?
-  timestamp DateTime @default(now())
+  id            String   @id @default(uuid())
+  actorEmail    String
+  actorRole     String
+  action        String   // CLOCK_START, CLOCK_PAUSE, REISSUE_QR, PASS_REVOKE, SCORE_FINALIZED
+  targetEntity  String
+  details       String
+  timestamp     DateTime @default(now())
 }
 
 model TieBreakConfig {
-  id           String @id @default(uuid())
-  eventId      String @unique
-  priorityRule String // e.g. "FINAL_ROUND_FIRST,REASONING_SCORE_SECOND,EARLIEST_SUBMISSION_THIRD,EVENT_HEAD_DECISION"
+  id                String   @id @default(uuid())
+  eventCode         String   @unique
+  tier1Criterion    String   @default("TOTAL_SCORE") // HIGHEST TOTAL SCORE
+  tier2Criterion    String   @default("COMPLEXITY_MISSION_SCORE") // HIGHEST SCORE IN FINAL/COMPLEX MISSION
+  tier3Criterion    String   @default("EARLIEST_SUBMISSION") // EARLIEST SUBMISSION TIMESTAMP
 }
